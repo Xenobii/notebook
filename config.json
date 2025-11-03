@@ -1,0 +1,14 @@
+{
+    "dataset": {
+        "sr" : 16000
+    },
+    "cqt": {
+        "bin_per_semitone": 3,
+        "fmin"            : 27.5,
+        "center"          : true
+    },
+    "train" : {
+        "batch_size": 16,
+        "epochs"    : 16
+    }
+}
