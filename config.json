@@ -4,6 +4,7 @@
     },
     "cqt": {
         "harmonics"       : 8,
+        "len_margin"      : 32,
         "sr"              : 16000,
         "hop_length"      : 512,
         "fmin"            : 27.5,
@@ -12,6 +13,9 @@
         "center_bins"     : true,
         "gamma"           : 0,
         "center"          : true
+    },
+    "model": {
+        ""  : ,
     },
     "train" : {
         "batch_size": 16,
