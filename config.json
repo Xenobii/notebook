@@ -3,8 +3,14 @@
         "sr" : 16000
     },
     "cqt": {
-        "bin_per_semitone": 3,
+        "harmonics"       : 8,
+        "sr"              : 16000,
+        "hop_length"      : 512,
         "fmin"            : 27.5,
+        "bin_per_semitone": 3,
+        "n_bins"          : 84,
+        "center_bins"     : true,
+        "gamma"           : 0,
         "center"          : true
     },
     "train" : {
