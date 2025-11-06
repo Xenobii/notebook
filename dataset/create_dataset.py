@@ -11,21 +11,23 @@ from argparse import ArgumentParser
 
 class DatasetCreator:
     def __init__(self, config):
-        self.sr = config["dataset"]["sr"]
+        self.sr = config["cqt"]["sr"]
+
+        self.dir_maestro_in  = config["dataset"]["dir_maestro_in"]
+        self.dir_maestro_out = config["dataset"]["dir_maestro_out"]
 
         # Init resampler for optimization
         self.resampler = None
 
-    def create_dataset_maestro(self, dir_maestro, dir_output, verbose_flag=False):
-        dir_maestro_processed = os.path.join(dir_output, "maestro_dataset.h5")
-        path_maestro_csv      = os.path.join(dir_maestro, "maestro-v3.0.0.csv")
+    def create_dataset_maestro(self, verbose_flag=False):
+        path_maestro_csv = os.path.join(self.dir_maestro_in, "maestro-v3.0.0.csv")
         
         df = pd.read_csv(path_maestro_csv)
         
-        with h5py.File(dir_maestro_processed, "w") as h5:
+        with h5py.File(self.dir_maestro_out, "w") as h5:
             print(f"Processing MAESTRO V3... \n")
             for idx, row in tqdm(df.iterrows(), total=len(df)):
-                f_wav = os.path.join(dir_maestro, row["audio_filename"])
+                f_wav = os.path.join(self.dir_maestro_in, row["audio_filename"])
 
                 wave = self.prep_wav(f_wav)
 
@@ -38,7 +40,7 @@ class DatasetCreator:
                 if verbose_flag:
                     tqdm.write(f"Processed: {row['canonical_composer']} - {row['canonical_title']}")
             
-            print(f"Finished processing, dataset saved at {dir_maestro_processed}")
+            print(f"Finished processing, dataset saved at {self.dir_maestro_out}")
 
 
     @torch.inference_mode()
@@ -55,8 +57,6 @@ class DatasetCreator:
 
 if __name__=="__main__":
     parser = ArgumentParser()
-    parser.add_argument("-i", "--dir_maestro", default="dataset/maestro-v3.0.0")
-    parser.add_argument("-o", "--dir_output", default="dataset")
     parser.add_argument("-v", "--verbose", action="store_true", default=False)
     args = parser.parse_args()
 
@@ -64,4 +64,4 @@ if __name__=="__main__":
         config = json.load(f)
     
     datasetcreator = DatasetCreator(config)
-    datasetcreator.create_dataset_maestro(args.dir_maestro, args.dir_output, args.verbose)
+    datasetcreator.create_dataset_maestro(args.verbose)

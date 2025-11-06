@@ -1,6 +1,7 @@
 {
     "dataset": {
-        "sr" : 16000
+        "dir_maestro_in" : "dataset/maestro-v3.0.0",
+        "dir_maestro_out": "dataset/maestro_dataset.h5"
     },
     "cqt": {
         "harmonics"       : 8,
@@ -15,10 +16,16 @@
         "center"          : true
     },
     "model": {
-        ""  : ,
+        "n_note"       : 88,
+        "ch_list"      : [32, 32, 16],
+        "pitch_classes": 12
     },
     "train" : {
-        "batch_size": 16,
-        "epochs"    : 16
+        "optimizer"  : "adamw",
+        "scheduler"  : "onecyclelr",
+        "lr"         : 0.001,
+        "batch_size" : 4,
+        "epochs"     : 16,
+        "num_workers": 8
     }
 }

@@ -2,50 +2,49 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from model.modules import *
-
-
-
-class Model_V1(nn.Module):
-    def __init__(
-            self,
-            nframe,
-            nbin,
-            nnotes,
-            len_margin,
-    ):
-        super().__init__()
-
-        self.nframe = nframe
-        self.nbin   = nbin
-
-        self.frameconv = FrameConv(len_margin)
-        self.noteattention = NotebookAttn(nnotes)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B = x.shape[0]
-        # [B, nframe, nbin]
-        x = x.reshape(B*self.nframe, self.nbin)
-        # [B*nframe, nbin]
-        x = self.framepadding(x)
-        # [B*nframe, nbin, 2M+1]
-        x = self.frameconv(x)
-        # [B*nframe, nbin, npitch]
-        x = self.noteattention(x)
-        # [B*nframe, nbin, npitch]
-        return x
-
-
 
 class Model_V1(nn.Module):
     def __init__(self, config):
         super().__init__()
+        
+        ch_in         = config["cqt"]["harmonics"]
+        ch_out        = config["model"]["pitch_classes"]
+        len_margin    = config["cqt"]["len_margin"]
+        ch_list       = config["model"]["ch_list"]
+        n_bin_in      = config["cqt"]["n_bins"]
+        n_bin_out     = config["cqt"]["n_bins"]
+        pitch_classes = config["model"]["pitch_classes"]
 
+        self.frameconv = FrameEncoder(
+            ch_in=ch_in,
+            ch_out=ch_out,
+            len_margin=len_margin,
+            ch_list=ch_list,
+            n_bin_in=n_bin_in,
+            n_bin_out=n_bin_out
+        )
+        
+        self.predictor = PitchClassPredictor(
+            ch_in=ch_in,
+            n_bins=n_bin_in,
+            n_classes=pitch_classes,
+            len_margin=len_margin
+        )
 
     def forward(self, x):
         # [B*nframe, harmonics, nbin, 2M+1]
-        # [B*nframe, ]
-        return x
+
+        # BRANCH 1
+        z = self.frameconv(x)
+        # [B*nframe, pitch_classes, nbin]
+        
+        # BRANCH 2
+        y = self.predictor(x)
+        # [B*nframe, pitch_classes]
+
+        x = y @ z
+        # [B*nframe, nbin]
+        return x, y, z
 
 
 
@@ -55,8 +54,9 @@ class FrameEncoder(nn.Module):
             ch_in,
             ch_out,
             len_margin,
-            n_bin:int = 216,
-            n_note: int = 88,
+            ch_list = [32, 32, 16],
+            n_bin_in:int = 216,
+            n_bin_out:int = 88,
             activation_fn:str = "leaky",
             p_dropout:float = 0.2
         ):
@@ -70,8 +70,6 @@ class FrameEncoder(nn.Module):
             activation_layer = nn.LeakyReLU
         else:
             raise ValueError
-
-        ch_list = [32, 32, 16]
 
         self.conv1 = nn.Sequential(
             nn.Conv2d(
@@ -121,7 +119,7 @@ class FrameEncoder(nn.Module):
             nn.Dropout(p=p_dropout)
         )
 
-        self.fc = ToeplitzLinear(n_bin, n_note)
+        self.fc = ToeplitzLinear(n_bin_in, n_bin_out)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # [B*nframe, ch_in, nbin, 2M+1]
@@ -134,7 +132,80 @@ class FrameEncoder(nn.Module):
         x = x.squeeze(3)
         # [B*nframe, ch_out, nbin]
         x = self.fc(x)
-        # [B*nframe, ch_out, n_note]
+        # [B*nframe, ch_out, nbin]
+        return x
+
+
+class PitchClassPredictor(nn.Module): 
+    def __init__(
+            self,
+            ch_in,
+            n_bins,
+            n_classes,
+            len_margin,
+            ch_hid:int = 64,
+            activation_fn:str = "leaky",
+            p_dropout:float = 0.2
+        ):
+        super().__init__()
+
+        if activation_fn == "relu":
+            activation_layer = nn.ReLU
+        elif activation_fn == "silu":
+            activation_layer = nn.SiLU
+        elif activation_fn == "leaky":
+            activation_layer = nn.LeakyReLU
+        else:
+            raise ValueError
+
+        self.framedown = nn.Sequential(
+            nn.Conv2d(
+                in_channels=ch_in,
+                out_channels=ch_hid,
+                kernel_size=(1, 2*len_margin+1),
+                padding=(0, len_margin),
+                stride=1
+            ),
+            activation_layer(),
+            nn.Dropout(p=p_dropout),
+            nn.Conv2d(
+                in_channels=ch_hid,
+                out_channels=ch_hid,
+                kernel_size=(1, 2*len_margin+1),
+                padding=(0, 0),
+                stride=1
+            ),
+            activation_layer(),
+            nn.Dropout(p=p_dropout)
+        )
+
+        self.featconv = nn.Sequential(
+            nn.Conv1d(
+                in_channels=ch_hid,
+                out_channels=1,
+                kernel_size=1,
+                padding=0,
+                stride=1
+            )
+        )
+
+        self.mlp = ToeplitzLinear(
+            n_bins, n_classes
+        )
+        self.softmax = nn.Sigmoid()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # [B*nframe, ch_in, nbin, 2M+1]
+        x = self.framedown(x)
+        # [B*nframe, ch_hid, nbin, 1]
+        x = x.squeeze(3)
+        # [B*nframe, ch_hid, nbin]
+        x = self.featconv(x)
+        # [B*nframe, 1, nbin]
+        x = x.squeeze(1)
+        # [B*nframe, nbin]
+        x = self.softmax(self.mlp(x))
+        # [B*nframe, n_classes]
         return x
 
 

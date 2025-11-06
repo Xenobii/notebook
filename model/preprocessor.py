@@ -42,7 +42,7 @@ class Preprocessor(nn.Module):
             pad_value=eps)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # [B, nsamples]
+        # [B, nframe]
         x = self.hcqt(x)
         # [B, harmonics, nbin, nframe, 2]
         x.permute(0, 3, 1, 2, 4)
