@@ -35,16 +35,16 @@ class Model_V1(nn.Module):
         # [B*nframe, harmonics, nbin, 2M+1]
 
         # BRANCH 1
-        z = self.frameconv(x)
+        notebook = self.frameconv(x)
         # [B*nframe, pitch_classes, nbin]
         
         # BRANCH 2
-        y = self.predictor(x)
+        predictor = self.predictor(x)
         # [B*nframe, pitch_classes]
 
-        x = y @ z
+        reconstruction = predictor @ notebook
         # [B*nframe, nbin]
-        return x, y, z
+        return notebook, predictor, reconstruction
 
 
 
@@ -120,6 +120,7 @@ class FrameEncoder(nn.Module):
         )
 
         self.fc = ToeplitzLinear(n_bin_in, n_bin_out)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # [B*nframe, ch_in, nbin, 2M+1]
@@ -132,6 +133,8 @@ class FrameEncoder(nn.Module):
         x = x.squeeze(3)
         # [B*nframe, ch_out, nbin]
         x = self.fc(x)
+        # [B*nframe, ch_out, nbin]
+        x = self.sigmoid(x)
         # [B*nframe, ch_out, nbin]
         return x
 

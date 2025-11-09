@@ -16,9 +16,13 @@
         "center"          : true
     },
     "model": {
-        "n_note"       : 88,
-        "ch_list"      : [32, 32, 16],
-        "pitch_classes": 12
+        "n_note"         : 88,
+        "ch_list"        : [32, 32, 16],
+        "pitch_classes"  : 12,
+        "checkpoint_path": "model/checkpoints",
+        "model_name"     : "model_1",
+        "radius"         : 1,
+        "pitch_factor"   : 7
     },
     "train" : {
         "optimizer"  : "adamw",

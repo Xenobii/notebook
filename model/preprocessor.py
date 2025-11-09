@@ -5,7 +5,7 @@ from nnAudio.Spectrogram import CQT2010v2
 from typing import Optional
 
 
-
+@torch.inference_mode()
 class Preprocessor(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -57,6 +57,7 @@ class Preprocessor(nn.Module):
 
 
     
+@torch.inference_mode()
 class HCQT(nn.Module):
     def __init__(
             self,
@@ -100,7 +101,7 @@ class HCQT(nn.Module):
         return x
 
 
-
+@torch.inference_mode()
 class ToLogMagnitude(nn.Module): 
     def __init__(self, min_val):
         super().__init__()
@@ -115,7 +116,7 @@ class ToLogMagnitude(nn.Module):
         return x
 
 
-
+@torch.inference_mode()
 class FramePadding(nn.Module):
     def __init__(self, pad_len, pad_value):
         super().__init__()
