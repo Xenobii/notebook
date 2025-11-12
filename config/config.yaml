@@ -1,0 +1,98 @@
+# ==============================================================================
+# Dataset
+# ==============================================================================
+dataset:
+  dir_maestro_in: dataset/maestro-v3.0.0
+  dir_maestro_out: dataset/maestro_dataset.h5
+# ==============================================================================
+# Torch
+# ==============================================================================
+torch:
+  gpu: true
+  deterministic: true
+  benchmark: false
+  allow_tf32: true
+  allow_tf32_mul: true
+# ==============================================================================
+# Dataloader
+# ==============================================================================
+dataloader:
+  dir_maestro_in: ${dataset.dir_maestro_in}
+  dir_maestro_out: ${dataset.dir_maestro_out}
+  train:
+    batch_size: ${training.batch_size}
+    shuffle: true
+    num_workers: 4
+    pin_memory: true
+  valid:
+    batch_size: ${training.batch_size}
+    shuffle: false
+    num_workers: 4
+    pin_memory: true
+# ==============================================================================
+# Preprocessing
+# ==============================================================================
+preprocessor:
+  len_margin: 32
+  sr: 16000
+  hop_length: 512
+  fmin: 27.5
+  bin_per_semitone: 3
+  n_bins: 84
+  center_bins: true
+# ==============================================================================
+# Pitch Shift
+# ==============================================================================
+pitch_shift:
+  min_shift: -11
+  max_shift: 11
+  bins_per_semitone: ${preprocessor.bin_per_semitone}
+# ==============================================================================
+# Transforms
+# ==============================================================================
+transforms:
+  transform_list:
+    - noise
+    - gain
+  gain:
+    min_gain: 0.5
+    max_gain: 1.5
+  noise:
+    min_snr: 0.1
+    max_snr: 2.0
+# ==============================================================================
+# Model
+# ==============================================================================
+model:
+  n_note: 88
+  ch_list: 
+    - 32
+    - 32
+    - 16
+  pitch_classes: 12
+  radius: 1.0
+  pitch_factor: 7
+# ==============================================================================
+# Training
+# ==============================================================================
+training:
+  optimizer: adamw
+  scheduler: onecyclelr
+  lr: 0.001
+  betas:
+    - 0.9
+    - 0.999
+  weight_decay: 0.01
+  batch_size: 4
+  epochs: 16
+  num_workers: 8
+# ==============================================================================
+# Criterions
+# ==============================================================================
+criterions:
+  pitch_equivariance:
+    n_bins: 12
+  pitch_class_reqularization:
+    n_bins: 12
+  reconstruction_loss:
+    loss_fn: l1
