@@ -38,7 +38,6 @@ class DataloaderConfig:
 # ==============================================================================
 @dataclass
 class PreprocessorConfig:
-    len_margin: int
     sr: int
     hop_length: int
     fmin: float 
@@ -75,12 +74,27 @@ class TransformsConfig:
 # Model
 # ==============================================================================
 @dataclass
-class ModelConfig:
-    n_note: int
-    ch_list: List[int]
+class FramePaddingConfig:
+    pad_len: int
+    pad_value: float
+@dataclass
+class OctavePoolingConfig:
+    bins_per_octave: int
+@dataclass
+class EncoderConfig:
+    len_margin: int
     pitch_classes: int
-    radius: float
-    pitch_factor: int
+@dataclass
+class PredictorConfig:
+    pitch_classes: int
+    n_bins: int
+    len_margin: int
+@dataclass
+class ModelConfig:
+    frame_padding: FramePaddingConfig
+    octave_pooling: OctavePoolingConfig
+    encoder: EncoderConfig
+    predictor: PredictorConfig
 # ==============================================================================
 # Training
 # ==============================================================================

@@ -1,266 +1,167 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
+
+from typing import Optional, List, Tuple
 
 
-class Model_V1(nn.Module):
-    def __init__(self, config):
+class Model(nn.Module):
+    def __init__(
+            self,
+            padding_fn: nn.Module,
+            octavepooling: nn.Module,
+            predictor: nn.Module,
+            encoder: nn.Module,
+        ):
         super().__init__()
-        
-        ch_in         = config["cqt"]["harmonics"]
-        ch_out        = config["model"]["pitch_classes"]
-        len_margin    = config["cqt"]["len_margin"]
-        ch_list       = config["model"]["ch_list"]
-        n_bin_in      = config["cqt"]["n_bins"]
-        n_bin_out     = config["cqt"]["n_bins"]
-        pitch_classes = config["model"]["pitch_classes"]
+        self.framepad      = padding_fn
+        self.octavepooling = octavepooling
+        self.encoder       = encoder
+        self.predictor     = predictor
 
-        self.frameconv = FrameEncoder(
-            ch_in=ch_in,
-            ch_out=ch_out,
-            len_margin=len_margin,
-            ch_list=ch_list,
-            n_bin_in=n_bin_in,
-            n_bin_out=n_bin_out
-        )
-        
-        self.predictor = PitchClassPredictor(
-            ch_in=ch_in,
-            n_bins=n_bin_in,
-            n_classes=pitch_classes,
-            len_margin=len_margin
-        )
-
-    def forward(self, x):
-        # [B*nframe, harmonics, nbin, 2M+1]
+    def forward(self, x: torch.Tensor)-> torch.Tensor:
+        B, nframe, nbin = x.shape
+        # [B, nframe, nbin]
+        x = self.framepad(x)
+        # [B, nframe, nbin, 2M+1]
+        x = x.flatten(0, 1)
+        # [B*nframe, nbin, 2M+1]
+        x_ = x
 
         # BRANCH 1
-        notebook = self.frameconv(x)
-        # [B*nframe, pitch_classes, nbin]
+        x = self.encoder(x)
+        # [B*nframe, channels, nbin]
+
+        notebook = self.octavepooling(x)
+        # [B*nframe, pitch_classes, bins_per_octave]
         
         # BRANCH 2
-        predictor = self.predictor(x)
+        predictor = self.predictor(x_)
         # [B*nframe, pitch_classes]
 
-        reconstruction = predictor @ notebook
+        reconstruction = (predictor @ notebook)
+        # [B, nframe, nbin]
+        reconstruction = reconstruction.reshape(B, nframe, nbin)
         # [B*nframe, nbin]
         return notebook, predictor, reconstruction
 
 
-
-class FrameEncoder(nn.Module):
+class DemoEncoder(nn.Module): 
     def __init__(
-            self,
-            ch_in,
-            ch_out,
-            len_margin,
-            ch_list = [32, 32, 16],
-            n_bin_in:int = 216,
-            n_bin_out:int = 88,
-            activation_fn:str = "leaky",
-            p_dropout:float = 0.2
-        ):
+        self,
+        len_margin: int,
+        pitch_classes: int
+    ):
         super().__init__()
 
-        if activation_fn == "relu":
-            activation_layer = nn.ReLU
-        elif activation_fn == "silu":
-            activation_layer = nn.SiLU
-        elif activation_fn == "leaky":
-            activation_layer = nn.LeakyReLU
-        else:
-            raise ValueError
-
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(
-                in_channels=ch_in,
-                out_channels=ch_list[0],
-                kernel_size=(15, 5),
-                padding=(7, 2),
-                stride=1
-            ),
-            activation_layer(),
-            nn.Dropout(p=p_dropout)
-        )
-
-        conv_layers = []
-        for i in range(len(ch_list)-1):
-            conv_layers.extend([
-                nn.Conv2d(
-                    in_channels=ch_list[i],
-                    out_channels=ch_list[i+1],
-                    kernel_size=(1, 1),
-                    padding=(0, 0),
-                    stride=1
-                ),
-                activation_layer(),
-                nn.Dropout(p=p_dropout)
-            ])
-        self.conv_layers = nn.Sequential(*conv_layers)
-
-        self.framedown = nn.Sequential(
-            nn.Conv2d(
-                in_channels=ch_list[-1],
-                out_channels=ch_out,
-                kernel_size=(1, 2*len_margin+1),
-                padding=(0, len_margin),
-                stride=1
-            ),
-            activation_layer(),
-            nn.Dropout(p=p_dropout),
-            nn.Conv2d(
-                in_channels=ch_out,
-                out_channels=ch_out,
-                kernel_size=(1, 2*len_margin+1),
-                padding=(0, 0),
-                stride=1
-            ),
-            activation_layer(),
-            nn.Dropout(p=p_dropout)
-        )
-
-        self.fc = ToeplitzLinear(n_bin_in, n_bin_out)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # [B*nframe, ch_in, nbin, 2M+1]
-        x = self.conv1(x)
-        # [B*nframe, ch_list[0], nbin, 2M+1]
-        x = self.conv_layers(x)
-        # [B*nframe, ch_out, nbin, 2M+1]
-        x = self.framedown(x)
-        # [B*nframe, ch_out, nbin, 1]
-        x = x.squeeze(3)
-        # [B*nframe, ch_out, nbin]
-        x = self.fc(x)
-        # [B*nframe, ch_out, nbin]
-        x = self.sigmoid(x)
-        # [B*nframe, ch_out, nbin]
-        return x
-
-
-class PitchClassPredictor(nn.Module): 
-    def __init__(
-            self,
-            ch_in,
-            n_bins,
-            n_classes,
-            len_margin,
-            ch_hid:int = 64,
-            activation_fn:str = "leaky",
-            p_dropout:float = 0.2
-        ):
-        super().__init__()
-
-        if activation_fn == "relu":
-            activation_layer = nn.ReLU
-        elif activation_fn == "silu":
-            activation_layer = nn.SiLU
-        elif activation_fn == "leaky":
-            activation_layer = nn.LeakyReLU
-        else:
-            raise ValueError
-
-        self.framedown = nn.Sequential(
-            nn.Conv2d(
-                in_channels=ch_in,
-                out_channels=ch_hid,
-                kernel_size=(1, 2*len_margin+1),
-                padding=(0, len_margin),
-                stride=1
-            ),
-            activation_layer(),
-            nn.Dropout(p=p_dropout),
-            nn.Conv2d(
-                in_channels=ch_hid,
-                out_channels=ch_hid,
-                kernel_size=(1, 2*len_margin+1),
-                padding=(0, 0),
-                stride=1
-            ),
-            activation_layer(),
-            nn.Dropout(p=p_dropout)
-        )
-
-        self.featconv = nn.Sequential(
-            nn.Conv1d(
-                in_channels=ch_hid,
-                out_channels=1,
-                kernel_size=1,
-                padding=0,
-                stride=1
-            )
-        )
-
-        self.mlp = ToeplitzLinear(
-            n_bins, n_classes
-        )
-        self.softmax = nn.Sigmoid()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # [B*nframe, ch_in, nbin, 2M+1]
-        x = self.framedown(x)
-        # [B*nframe, ch_hid, nbin, 1]
-        x = x.squeeze(3)
-        # [B*nframe, ch_hid, nbin]
-        x = self.featconv(x)
-        # [B*nframe, 1, nbin]
-        x = x.squeeze(1)
-        # [B*nframe, nbin]
-        x = self.softmax(self.mlp(x))
-        # [B*nframe, n_classes]
-        return x
-
-
-class ToeplitzLinear(nn.Conv1d):
-    def __init__(self, in_features, out_features):
-        super(ToeplitzLinear, self).__init__(
+        self.convframe = nn.Conv2d(
             in_channels=1,
-            out_channels=1,
-            kernel_size=in_features+out_features-1,
-            padding=out_features-1,
-            bias=False
+            out_channels=64,
+            kernel_size=(1, 2*len_margin+1),
+            padding=(0, 0),
+            stride=1
         )
 
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        return super(ToeplitzLinear, self).forward(input.unsqueeze(-2)).squeeze(-2)
+        self.convbin = nn.Conv1d(
+            in_channels=64,
+            out_channels=64,
+            kernel_size=3,
+            padding=1,
+            stride=1
+        )
+
+        self.convpitchclass = nn.Conv1d(
+            in_channels=64,
+            out_channels=pitch_classes,
+            kernel_size=1,
+            padding=0,
+            stride=1
+        )
+
+    def forward(self, x:torch.Tensor)-> torch.Tensor:
+        # [B, nbin, 2M+1]
+        x = x.unsqueeze(1)
+        # [B, 1, nbin, 2M+1]
+        x = self.convframe(x)
+        # [B, channels, nbin, 1]
+        x = x.squeeze(3)
+        # [B, channels, nbin]
+        x = self.convpitchclass(x)
+        # [B, pitch_classes, nbin]
+        return x
 
 
-class Attn(nn.Module):
-    def __init__(self, embed_size):
+class DemoPredictor(nn.Module):
+    def __init__(
+            self,
+            pitch_classes: int,
+            n_bins: int,
+            len_margin: int
+    ):
         super().__init__()
+        self.pitch_classes = pitch_classes
+        self.n_bins        = n_bins
+        self.margin_dim    = 2*len_margin+1
 
-        self.query = nn.Linear(embed_size, embed_size)
-        self.key   = nn.Linear(embed_size, embed_size)
-        self.value = nn.Linear(embed_size, embed_size)
+        self.conv = nn.Conv2d(
+            in_channels=1,
+            out_channels=128,
+            kernel_size=(3, 3),
+            padding=(1, 1),
+            stride=(1, 1)
+        )
 
-        self.fc_out = nn.Linear(embed_size, embed_size)
-        
+        self.pool = nn.MaxPool2d(
+            kernel_size=(self.n_bins, self.margin_dim)
+        )
 
-    def scaled_dot_product_attention(self, Q:torch.Tensor, K:torch.Tensor, V:torch.Tensor, mask=None) -> torch.Tensor:
-        d_k = Q.size(-1)
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / (d_k ** 0.5)
+        self.fc = nn.Linear(128, pitch_classes)
 
-        if mask is not None:
-            scores = scores.masked_fill(mask==0, float('-inf'))
+    def forward(self, x: torch.Tensor)-> torch.Tensor:
+        # [B, nbin, 2M+1]
+        x = x.unsqueeze(1)
+        # [B, 1, n_bin, 2M+1]
+        x = self.conv(x)
+        # [B, ch_1, n_bin, 2M+1]
+        x = self.pool(x)
+        # [B, ch_1, 1, 1]
+        x = x.squeeze(3).squeeze(2)
+        # [B, ch_1]
+        x = self.fc(x)
+        # [B, pitch_class]
+        return x
 
-        attention_weights = F.softmax(scores, dim=-1)
-        attention_weights = attention_weights.masked_fill(torch.isnan(attention_weights), 0.0)
 
-        output = torch.matmul(attention_weights, V)
-        return output, attention_weights
+class OctavePooling(nn.Module):
+    def __init__(
+            self,
+            bins_per_octave: int,
+    ):
+        super().__init__()
+        self.bins_per_octave = bins_per_octave
 
+    @torch.inference_mode()
+    def forward(self, x: torch.Tensor)-> torch.Tensor:
+        # [B, channels, n_bins]
+        x = rearrange("B C (j k) -> B C k j", k=self.bins_per_octave)
+        # [B, channels, bins_per_octave, n_octaves]
+        x = x.mean(dim=2)
+        # [B, channels, bins_per_octave]
+        return x
+
+
+class FramePadding(nn.Module):
+    def __init__(self, pad_len, pad_value):
+        super().__init__()
+        self.pad_len   = pad_len
+        self.pad_value = pad_value
+
+    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, seq_len, embed_size = x.shape
-        Q = self.query(x)
-        K = self.key(x)
-        V = self.value(x)
-
-        Q = Q.view(B, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        K = K.view(B, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        V = V.view(B, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-
-        out, _ = self.scaled_dot_product_attention(Q, K, V)
-        out = out.transpose(1, 2).contiguous().view(B, seq_len, embed_size)
-
-        return self.fc_out(out)
+        # [B, nframe, nbin]
+        x = F.pad(x, (0, 0, 0, 0, self.pad_len, self.pad_len), value=self.pad_value)
+        # [B, nframe+2M, nbin]
+        x = x.unfold(dimension=1, size=2*self.pad_len + 1, step=1)
+        # [B, nframe, nbin, 2M+1]
+        return x

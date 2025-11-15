@@ -33,7 +33,6 @@ dataloader:
 # Preprocessing
 # ==============================================================================
 preprocessor:
-  len_margin: 32
   sr: 16000
   hop_length: 512
   fmin: 27.5
@@ -64,14 +63,23 @@ transforms:
 # Model
 # ==============================================================================
 model:
-  n_note: 88
-  ch_list: 
-    - 32
-    - 32
-    - 16
-  pitch_classes: 12
-  radius: 1.0
-  pitch_factor: 7
+  _target_: model.model.Model
+  frame_padding:
+    _target_: model.model.FramePadding
+    pad_len: 32
+    pad_value: 1e-8
+  octave_pooling:
+    _target_: model.model.OctavePooling
+    bins_per_octave: ${12*preprocessor.bins_per_semitone}
+  encoder:
+    _target_: model.model.FrameEncoder
+    len_margin: ${model.frame_padding.pad_len}
+    pitch_classes: 12
+  predictor:
+    _target_: model.model.PitchClassPredictor
+    pitch_classes: 12
+    n_bins: ${preprocessor.n_bins}
+    len_margin: ${model.frame_padding.pad_len}
 # ==============================================================================
 # Training
 # ==============================================================================
